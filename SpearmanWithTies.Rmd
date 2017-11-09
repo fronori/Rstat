@@ -1,0 +1,272 @@
+---
+title: \(\rho\) and order\(:\) computing p-values of Spearman's rank correlation coefficient \(\rho\) with ties.
+author: "@fronori"
+date: "11/9/2017"
+output:
+  pdf_document:
+    latex_engine: xelatex
+mainfont: Hiragino Kaku Gothic Pro
+monofont: Hiragino Kaku Gothic Pro
+---
+
+```{r setup, include=FALSE}
+Sys.setlocale(locale = "Japanese_Japan.932")
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(cache=TRUE)
+```
+
+## 同順位がある場合のスピアマン順位相関のp値について検討する。
+たとえば[このような](https://stats.stackexchange.com/questions/211851/permutation-test-for-spearman-correlation-coefficient)対応のあるデータがあったとする。
+```{r }
+x <- c(7.1, 7.1, 7.2, 8.3, 9.4, 10.5, 11.4)
+y <- c(2.8, 2.9, 2.8, 2.6, 3.5, 4.6, 5.0)
+sampledat <- data.frame(xval = x, yval = y)
+```
+
+散布図にするとこんな感じ。
+```{r }
+library(ggplot2)
+ggplot(sampledat, aes(x=xval, y=yval)) + geom_point(color = "red", size = 3)
+```
+
+このデータのSpearman's rank correlation $\rho$は下記のように計算できる。
+```{r cars}
+cor.test(x, y, method = "spearman")
+```
+
+$\rho$ = 0.7と求まった。ちなみに信頼区間については[ここ](https://botchbotch.wordpress.com/2016/03/02/%E9%A0%86%E4%BD%8D%E7%9B%B8%E9%96%A2%E4%BF%82%E6%95%B0%E3%81%AE%E4%BF%A1%E9%A0%BC%E5%8C%BA%E9%96%93%E3%81%AE%E7%AE%97%E5%87%BA/)を参照。ただし、この例のように同順位（タイ）があると
+
+<span style="color:brown">## Cannot compute exact p-value with ties</span>
+
+という<span style="color:red">**Warning**</span>が出るので気持ちわるい。
+
+
+警告を消すもっとも手っ取り早い対処法は、厳密性を求め過ぎないことである：
+```{r}
+cor.test(x, y, method = "spearman", exact = FALSE)
+```
+もしくは、
+```{r}
+suppressWarnings(cor.test(x, y, method = "spearman"))
+```
+と警告を抑制し非表示にする方法もある。しかしこれでは疑問の解消にならない。
+
+そもそも、どのようにp値を計算しているのかを知ることがヒントになる（かもしれない）。cor.test()では、
+
+> Algorithm AS 89 has two methods, the "exact" method and the "semi-exact" method. cor.test() uses the former when n < 10 and the latter when 9 < n < 1290.
+[参照リンク](https://stats.stackexchange.com/questions/235024/different-methods-for-finding-spearmans-coefficient-produce-diff-p-values-depen)
+
+というアルゴリズムで計算している。今の例の場合、n < 10なので、[AS 89](https://www.jstor.org/stable/2347111)の"exact"法で計算していることになる  
+（後に明らかになるが、同順位がある場合はたとえexact = TRUEを指定してもAS 89法は適用されず  
+もっと単純な手法が実行されることが判明する。）
+
+このアルゴリズムが内部でどのように計算しているかを検証するために、まずは同順位がない場合の[別の例](https://stats.stackexchange.com/questions/235024/different-methods-for-finding-spearmans-coefficient-produce-diff-p-values-depen)を見る。
+
+## 同順位がない例でまずは検証
+```{r}
+x2 <- 1:7
+y2 <- c(1, 3, 6, 2, 7, 4, 9)
+sampledat2 <- data.frame(xval = x2, yval = y2)
+```
+
+散布図にするとこんな感じ。
+```{r }
+ggplot(sampledat2, aes(x=xval, y=yval)) + geom_point(color = "blue", size = 3)
+(rho <- cor.test(x2, y2, method="spearman")$estimate)
+```
+このデータでは$\rho$ = 0.75となる。同順位がないので今回は警告が出ていないことに注意。  
+サンプルサイズが７と小さいので、全ての場合について並べ替え検定（permutation test）を手軽に実行できる。
+
+[ここ](https://stats.stackexchange.com/questions/235024/different-methods-for-finding-spearmans-coefficient-produce-diff-p-values-depen)にある求め方だと、
+
+```{r permutations, cache = TRUE, }
+library(e1071)
+par(family="Osaka")
+# permutations()を使うためにロード
+permutation <- permutations(7)
+n <- length(x2)
+
+# 引数とy2の相関係数（同順位がない場合）を計算する関数
+f_rho <- function(a) 1 - 6 * sum((rank(a) - rank(y2))^2) / (n^3 - n)
+
+x2_all_perm <- matrix(x2[permutation], ncol=7)
+x2_all_perm_rho <- apply(x2_all_perm, 1, function(a) f_rho(a))
+
+sum(x2_all_perm_rho > rho) / factorial(7) * 2
+
+cor.test(x2, y2, method="spearman")$p.value
+```
+となり結果が一致する。最後に２倍しているのは両側検定するためである。絶対値を取って、
+```{r}
+sum(abs(x2_all_perm_rho) > abs(rho)) / factorial(7)
+```
+としても同じことになる（はず）。しかし、[こちら](https://stats.stackexchange.com/questions/50015/spearman-correlation-in-the-presence-of-many-ties-how-to-spot-a-problem)のwhuberさんの解法はやや異なる結果を返す。
+```{r replicate, cache = TRUE}
+test <- function(x, y) suppressWarnings(cor.test(x, y, method="spearman")$estimate)
+rho <- test(x2, y2)
+# 並べ替え分布をシミュレーション
+set.seed(1234)
+p <- replicate(10^5, test(x2, sample(y2, length(y2))))
+
+# 絶対値が厳密に超える場合をカウント
+p_out <- sum(abs(p) > rho)
+
+# もしあるなら、一致する場合をカウント
+p_at <- sum(abs(p) == rho)
+
+# 超える場合の割合、すなわちp値
+(p_out + p_at /2) / length(p)
+```
+一致するときの場合の数を半分にしている（厳密に一致する期待値が半々だから？）ところが気になる。  
+シミュレーション回数がこの程度のオーダーで十分なのか不安が残るが、これ以上桁を増やすと、手元の環境で時間がかかりすぎる。
+
+[ここ](https://stats.stackexchange.com/questions/211851/permutation-test-for-spearman-correlation-coefficient)には別の算出法が紹介されている。その一つが、coin::spearman_test()を用いる方法。
+```{r, message=FALSE}
+library(coin)
+# spearman_test()とapproximate()を使うためにロード
+```
+```{r, cache= TRUE}
+spearman_test(x2 ~ y2, distribution = approximate(B=10000000))
+```
+approximate()はMonte-CarloリサンプリングをB回繰り返して検定統計量の帰無仮説の分布を作ってくれる関数。  
+今回のサンプルサイズだとこんなに繰り返さなくても良さそう。
+
+もう一つが、combinat::permn()で全ての場合を計算する場合。上のe1071::permutations()を使った場合とやっていることはほぼ同じ。
+```{r,  message=FALSE}
+library(combinat)
+# permn()を使うためにロード
+```
+
+```{r}
+spcor <- sapply(permn(x2), y=y2, method="spearman", cor)
+mean(abs(spcor) >= rho)
+```
+
+ほぼ同様だが、Jorge Ortiz Pinillaさんの解法は[これ](https://www.researchgate.net/post/How_can_I_implement_a_permutation_test_on_this_data_to_test_the_significance_of_a_correlation_between_the_area_of_lake_and_richness_of_a_species)：
+```{r}
+n <- length(y2)
+NP <- factorial(n)
+y2s <- permn(y2)
+Rs <- rep(NA, NP)
+for(i in 1:NP) {
+  Rs[i]<- cor(x2, y2s[[i]], method = "spearman")
+}
+sum(abs(Rs) >= abs(rho)) / NP
+```
+
+## $\rho$ の大文字は奇しくも $P$ だが、それはともかく。閑話休題
+そろそろ、同順位（タイ）のある場合の話に戻そう。これまで見てきた手法を用いて、最初のsampledatの場合にp値を求めてみよう。
+```{r}
+(rho <- cor.test(x, y, method="spearman")$estimate)
+```
+
+```{r}
+set.seed(1234)
+p <- replicate(10^5, test(x, sample(y, length(y))))
+
+# 絶対値が厳密に超える場合をカウント
+p_out <- sum(abs(p) > rho)
+
+# もしあるなら、一致する場合をカウント
+p_at <- sum(abs(p) == rho)
+
+# 超える場合の割合、すなわちp値
+(p_out + p_at /2) / length(p)
+```
+
+```{r}
+spearman_test(x ~ y, distribution = approximate(B=10000000))
+```
+
+```{r}
+spcor <- sapply(combinat::permn(x), y=y, method="spearman", cor)
+mean(abs(spcor) >= rho)
+```
+
+```{r}
+n = length(y)
+NP = factorial(n)
+ys = permn(y)
+Rs = rep(NA, NP)
+for(i in 1:NP) {
+  Rs[i] = cor(x, ys[[i]], method = "spearman")
+}
+sum(abs(Rs) >= abs(rho)) / NP
+```
+ここで、最初に戻ってcor.test()の出力をもう一度見て見ると
+```{r}
+cor.test(x, y, method = "spearman")
+```
+これまで計算したp値と少しずれているようだが許容範囲内だろうか。  
+そもそも、同順位がある場合にこのcor.test()によるp値はどのように計算されたのか？AS 89アルゴリズムの[原論文](https://www.jstor.org/stable/2347111)を見に行くとはっきりするが、  
+これは同順位がない場合の計算である。
+
+ここで、cor.test()のソースを
+```{r, eval = FALSE}
+getS3method("cor.test", "default")
+```
+として中身を見てみる（最初からそうすべきだったかもしれない）と、同順位がある場合の判定を
+```{r}
+n <- length(x)
+(TIES <- (min(length(unique(x)), length(unique(y))) < n))
+```
+で行っている。sampledatの場合、TIES = TRUEである。そして、
+```{r}
+exact = TRUE
+if (TIES && exact) {
+  exact <- FALSE
+  warning("Cannot compute exact p-value with ties")
+  }
+```
+フラグをexact <- FALSEに変えて、問題の警告を発する。その上で、その後の具体的にp値を計算している部分だけを抽出すると、
+```{r}
+r <- cor(rank(x) , rank(y))
+q <- (n^3 - n) * (1 - r)/6
+den <- (n * (n^2 - 1))/6
+r <- 1 - q/den
+pt(r/sqrt((1 - r^2)/(n - 2)), df = n - 2, 
+   lower.tail = FALSE) * 2
+```
+という計算を中で行なっていたことがついに判明する。  
+同順位がある場合は、なんとざっくりt分布で近似してp値を求めているだけなのだった。つまり、
+```{r}
+cor.test(rank(x), rank(y), method = "pearson")
+```
+と完全に同じである。意外と大胆な計算であった。
+
+ちなみに、同順位がないときに $n \leq 22$ の場合の統計量Sの[数表](https://github.com/cran/pspearman/blob/master/R/spearman.data.R)が知られていて、これを用いた厳密値を求める  
+pspearmanパッケージのpspearman::spearman.test()関数がある。
+
+sampledata2において、
+```{r}
+pspearman::spearman.test(x2, y2, approximation="exact")
+```
+また、approximation = "AS89"としても
+```{r}
+pspearman::spearman.test(x2, y2, approximation="AS89")
+```
+厳密解と（有効数字の桁数において）同じ値を返すようだ。そして、sampledataにおいて、
+```{r}
+pspearman::spearman.test(x, y, approximation = "t-distribution")
+```
+と指定するとcor.test()と同じ結果を返す。こちらの方が、どの近似法を用いたか明示的に指定するので意味を掴みやすい。
+
+まとめると、同順位がある場合のSpearmanの相関係数$\rho$の無相関検定（帰無仮説： $\rho = 0$ ）のp値の計算法のバリエーションを調べた。  
+デフォルトのcor.test(x, y, method = "spearman")ではオプションでexact = TRUEを指定したとしても中では結局t分布の近似を行う。  
+一方、Monte-Carloシミュレーションや並べ替え検定による全パターンの網羅計算もサンプルサイズがある程度小さければ可能（tractable）である。  
+それらの結果はそれほど違わないようだ。
+
+MCサンプリングや並べ替え検定よりもt分布による近似がほんの少し非保守的になったのが一般的な傾向なのか、  
+それとも今回の例においてたまたまそうなったのかは今後検証する必要がある。
+
+また本題からは脇道にそれたが、同順位なしの場合にAS 89アルゴリズム（[Best & Roberts, 1975](https://www.jstor.org/stable/2347111)）  
+という手法が精度の良い計算法として用いられていることがわかった。
+
+最後に、検定のp値だけではなく効果量（相関係数の場合はその絶対値）やその信頼区間にも目を向けるべきであろう。  
+それに関しては、冒頭でも触れたが、Spearman's $\rho$の[信頼区間の算出法](https://botchbotch.wordpress.com/2016/03/02/%E9%A0%86%E4%BD%8D%E7%9B%B8%E9%96%A2%E4%BF%82%E6%95%B0%E3%81%AE%E4%BF%A1%E9%A0%BC%E5%8C%BA%E9%96%93%E3%81%AE%E7%AE%97%E5%87%BA/)が参考になる。
+
+## 結論として、
+```{r}
+## Cannot compute exact p-value with ties
+```
+という警告は普段はあまり気にせず無視するのが一番の得策かもしれない。

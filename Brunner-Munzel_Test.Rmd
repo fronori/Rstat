@@ -1,0 +1,55 @@
+---
+title: "Brunner-Munzel Test with R"
+author: "@fronori"
+date: "July 17, 2016"
+output:
+  pdf_document:
+    latex_engine: xelatex
+mainfont: Hiragino Kaku Gothic Pro
+monofont: Hiragino Kaku Gothic Pro
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# {lawstat}パッケージのbrunner.munzel.test()関数でBrunner Munzel検定を行う場合
+```{r message = FALSE}
+library(lawstat)
+x = c(1,2,1,1,1,1,1,1,1,1,2,4,1,1)
+y = c(3,3,4,3,1,2,3,1,1,5,4)
+brunner.munzel.test(x,y)
+# この例は http://d.hatena.ne.jp/hoxo_m/20150217/p1 から借りました。
+```
+
+
+# {nparcomp}パッケージのnpar.t.test()関数を使ってBrunner Munzel検定を行う場合
+```{r message=FALSE}
+library(nparcomp)
+```
+## npar.t.test()関数を用いるには、引数にデータフレームを指定する必要があります。  
+## １列目にスコア（５件法の評定値など）、２列目に群（"male"/"female"など
+## でもいいし、0/1などのダミー変数でもよい）のデータフレームを作ります。
+```{r}
+dat.hoxo_m <- data.frame(score=c(x,y), group=c(rep("group1", length(x)), rep("group2", length(y))))
+head(dat.hoxo_m, n=3) # データフレームの最初の３行を表示
+tail(dat.hoxo_m, n=3) # データフレームの最後の３行を表示
+boxplot(score~group, data=dat.hoxo_m) # 箱ヒゲ図で可視化
+```
+
+## npar.t.test()関数のオプションでmethod="t.app"を指定すると、Brunner-Munzel検定を行ってくれるようです。
+```{r}
+a <- npar.t.test(score~group, data = dat.hoxo_m, alternative = "two.sided", 
+                 method="t.app", info=FALSE, plot.simci=FALSE)
+# 後でサマリーを表示するので、info=FALSE
+# 後でプロットさせるので、plot.simci=FALSE
+# ちなみに、method = "permu"を指定すると、permutation testによる結果を計算してくれます。
+# より詳しい説明は公式ドキュメント参照。 https://cran.r-project.org/web/packages/nparcomp/nparcomp.pdf
+
+summary(a) # 検定結果のサマリーを表示
+```
+"p(a,b) > 1/2 : b tends to be larger than a"" という結果から、二番目の群、この場合はy（group2)の方が大きいということが言えます。
+```{r}
+plot(a) # 信頼区間をプロット
+```
+### brunner.munzel.test()とnpar.t.test()のどちらの関数を使っても、Brunner-Munzel検定で推定している確率はP(X<Y)+.5*P(X=Y) = 0.789、95%信頼区間 = (0.595, 0.983)となり、結果は一致してますね！
